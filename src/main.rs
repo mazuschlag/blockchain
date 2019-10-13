@@ -1,7 +1,11 @@
+use std::env;
 use std::io;
 use std::sync::Mutex;
+use std::collections::HashSet;
 use chrono::prelude::*;
 use sha2::{Sha256, Digest};
+use url::{Url};
+use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use actix_web::{middleware, web, post, get, App, HttpResponse, HttpServer};
 
@@ -14,6 +18,11 @@ struct Response {
 struct FullChain {
     chain: Vec<Block>,
     length: usize
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct NodeList {
+    nodes: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -66,12 +75,13 @@ impl Block {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Blockchain {
     current_transactions: Vec<Transaction>,
-    chain: Vec<Block>
+    chain: Vec<Block>,
+    nodes: HashSet<String>
 }
 
 impl Blockchain {
     fn new() -> Blockchain {
-        let mut blockchain = Blockchain{ current_transactions: Vec::new(), chain: Vec::new() };
+        let mut blockchain = Blockchain{ current_transactions: Vec::new(), chain: Vec::new(), nodes: HashSet::new() };
         let prev_hash = format!("{:x}", Sha256::new().chain(b"1").result());
         blockchain.new_block(1, &prev_hash);
         blockchain
@@ -91,6 +101,18 @@ impl Blockchain {
             Some(block) => block.index + 1,
             None => 0
         }
+    }
+
+    fn register_node(&mut self, node: &str) -> bool {
+        let parsed_url = Url::parse(node).unwrap();
+        if let Some(host) = parsed_url.host_str() {
+            if let Some(port) = parsed_url.port() {
+                return self.nodes.insert(format!("{}:{}", host, port))
+            } else {
+                return self.nodes.insert(format!("{}", host))
+            }
+        }
+        false
     }
 
     fn hash(block: &Block) -> String {
@@ -118,6 +140,16 @@ impl Blockchain {
         FullChain {
             chain: self.chain.clone(),
             length: self.chain.len()
+        }
+    }
+
+    fn node_list(&self) -> NodeList {
+        let mut node_list = Vec::new();
+        for node in self.nodes.iter() {
+            node_list.push(node.to_string());
+        }
+        NodeList {
+            nodes: node_list
         }
     }
 }
@@ -155,8 +187,25 @@ fn full_chain(blockchain: web::Data<Mutex<Blockchain>>) -> HttpResponse {
     HttpResponse::Ok().json(blockchain.lock().unwrap().full_chain())
 }
 
+#[post("/nodes/register")]
+fn register_nodes(blockchain: web::Data<Mutex<Blockchain>>, req: web::Json<NodeList>) -> HttpResponse {
+    for node in &req.nodes {
+        let _ = blockchain.lock().unwrap().register_node(node);
+    }
+    HttpResponse::Ok().json(Response {
+        message: format!("Nodes successfully registered")
+    })
+}
+
+#[get("/nodes")]
+fn nodes(blockchain: web::Data<Mutex<Blockchain>>) -> HttpResponse {
+    HttpResponse::Ok().json(blockchain.lock().unwrap().node_list())
+}
 
 fn main() -> io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    let port = &args[1];
+    let _ = format!("{}", Uuid::new_v4()).replace("-", "");
     let blockchain = web::Data::new(Mutex::new(Blockchain::new()));
     HttpServer::new(move || {
         App::new()
@@ -165,7 +214,9 @@ fn main() -> io::Result<()> {
             .service(new_transaction)
             .service(full_chain)
             .service(mine)
+            .service(nodes)
+            .service(register_nodes)
     })
-    .bind("127.0.0.1:3000")?
+    .bind(format!("127.0.0.1:{}", port))?
     .run()
 }
