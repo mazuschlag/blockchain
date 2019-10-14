@@ -71,6 +71,11 @@ impl Block {
             previous_hash: previous_hash.to_string()
         }
     }
+
+    fn hash(&self) -> String {
+        let block_string = serde_json::to_string(self).unwrap();
+        format!("{:x}", Sha256::new().chain(block_string).result())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -116,14 +121,9 @@ impl Blockchain {
         false
     }
 
-    fn hash(block: &Block) -> String {
-        let block_string = serde_json::to_string(block).unwrap();
-        format!("{:x}", Sha256::new().chain(block_string).result())
-    }
-
     fn proof_of_work(&self, last_block: &Block) -> usize {
         let last_proof = last_block.proof;
-        let last_hash = Blockchain::hash(last_block);
+        let last_hash = last_block.hash();
         let mut proof = 0;
         while !Blockchain::valid_proof(last_proof, proof, last_hash.as_str()) {
             proof += 1;
@@ -140,7 +140,7 @@ impl Blockchain {
     fn valid_chain(chain: &Vec<Block>) -> bool {
         match chain.first() {
             Some(mut prev_block) => {
-                let prev_block_hash = Blockchain::hash(prev_block);
+                let prev_block_hash = prev_block.hash();
                 for block in chain.iter().skip(1) {
                     println!("previous block: {:?}", prev_block);
                     println!("current block: {:?}", block);
@@ -191,7 +191,7 @@ fn mine(blockchain: web::Data<Mutex<Blockchain>>) -> HttpResponse {
     let mut local_blockchain = blockchain.lock().unwrap();
     if let Some(last_block) = local_blockchain.chain.last() {
         let proof = local_blockchain.proof_of_work(last_block);
-        let previous_hash = Blockchain::hash(last_block);
+        let previous_hash = last_block.hash();
         let block = local_blockchain.new_block(proof, &previous_hash);
         return HttpResponse::Ok().json(Mine {
             message: "New block forged".to_string(),
