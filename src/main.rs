@@ -1,13 +1,14 @@
 use std::env;
 use std::io;
 use std::sync::Mutex;
-use std::collections::HashSet;
+use std::collections:: HashSet;
+use actix_web::{middleware, web, post, get, App, HttpResponse, HttpServer};
 use chrono::prelude::*;
+use reqwest;
+use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use url::{Url};
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
-use actix_web::{middleware, web, post, get, App, HttpResponse, HttpServer};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Response {
@@ -136,6 +137,37 @@ impl Blockchain {
         &guess_hash[..5] == "00000"
     }
 
+    fn valid_chain(chain: &Vec<Block>) -> bool {
+        match chain.first() {
+            Some(mut prev_block) => {
+                let prev_block_hash = Blockchain::hash(prev_block);
+                for block in chain.iter().skip(1) {
+                    println!("previous block: {:?}", prev_block);
+                    println!("current block: {:?}", block);
+                    println!("----------------");
+                    if block.previous_hash != prev_block_hash {
+                        return false
+                    }
+                    if !Blockchain::valid_proof(prev_block.proof, block.proof, &prev_block_hash) {
+                        return false
+                    }
+                    prev_block = block;
+                }
+                return true
+            },
+            None => return false
+        }
+    }
+
+    fn resolve_conflicts(&mut self) {
+        for node in &self.nodes {
+            let res: FullChain = reqwest::get(&format!("http://{}/chain", node)).unwrap().json().unwrap();
+            if res.length > self.chain.len() && Blockchain::valid_chain(&res.chain) {
+                self.chain = res.chain;
+            }
+        }
+    }
+
     fn full_chain(&self) -> FullChain {
         FullChain {
             chain: self.chain.clone(),
@@ -197,10 +229,19 @@ fn register_nodes(blockchain: web::Data<Mutex<Blockchain>>, req: web::Json<NodeL
     })
 }
 
+#[get("/nodes/resolve")]
+fn consensus(blockchain: web::Data<Mutex<Blockchain>>) -> HttpResponse {
+    blockchain.lock().unwrap().resolve_conflicts();
+    HttpResponse::Ok().json(Response {
+        message: format!("Conflicts resolved")
+    })
+}
+
 #[get("/nodes")]
 fn nodes(blockchain: web::Data<Mutex<Blockchain>>) -> HttpResponse {
     HttpResponse::Ok().json(blockchain.lock().unwrap().node_list())
 }
+
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -216,6 +257,7 @@ fn main() -> io::Result<()> {
             .service(mine)
             .service(nodes)
             .service(register_nodes)
+            .service(consensus)
     })
     .bind(format!("127.0.0.1:{}", port))?
     .run()
