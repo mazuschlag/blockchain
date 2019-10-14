@@ -243,7 +243,6 @@ fn nodes(blockchain: web::Data<Mutex<Blockchain>>) -> HttpResponse {
     HttpResponse::Ok().json(blockchain.lock().unwrap().node_list())
 }
 
-
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
     let port = &args[1];
