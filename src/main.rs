@@ -140,15 +140,16 @@ impl Blockchain {
     fn valid_chain(chain: &Vec<Block>) -> bool {
         match chain.first() {
             Some(mut prev_block) => {
-                let prev_block_hash = prev_block.hash();
                 for block in chain.iter().skip(1) {
                     println!("previous block: {:?}", prev_block);
                     println!("current block: {:?}", block);
                     println!("----------------");
+                    let prev_block_hash = prev_block.hash();
                     if block.previous_hash != prev_block_hash {
                         return false
                     }
                     if !Blockchain::valid_proof(prev_block.proof, block.proof, &prev_block_hash) {
+                        dbg!(Blockchain::valid_proof(prev_block.proof, block.proof, &prev_block_hash));
                         return false
                     }
                     prev_block = block;
@@ -201,7 +202,7 @@ fn mine(blockchain: web::Data<Mutex<Blockchain>>) -> HttpResponse {
             previous_hash: previous_hash
         })
     }
-    HttpResponse::Ok().json(Response {
+    HttpResponse::InternalServerError().json(Response {
         message: "There was an error mining".to_string()
     })
 }
